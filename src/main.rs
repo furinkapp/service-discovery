@@ -1,20 +1,40 @@
 use std::{collections::HashMap, error::Error, net::Ipv4Addr, time::Instant};
 
-use furink_proto::discovery::{
-    discovery_service_server::{DiscoveryService, DiscoveryServiceServer},
-    lookup_response::LookupPayload,
-    HeartbeatPayload, LookupRequest, LookupResponse, RegisterRequest, RegisterResponse,
-    ServiceKind,
+use furink_proto::{
+    discovery::{
+        discovery_service_server::{DiscoveryService, DiscoveryServiceServer},
+        lookup_response::LookupPayload,
+        HeartbeatPayload, LookupRequest, LookupResponse, RegisterRequest, RegisterResponse,
+        ServiceKind,
+    },
+    version::{
+        version_service_server::{VersionService, VersionServiceServer},
+        VersionRequest, VersionResponse,
+    },
+    VERSION,
 };
 use tokio::sync::RwLock;
 use tonic::{async_trait, transport::Server, Code, Request, Response, Status};
 use uuid::Uuid;
 
+struct VersionServiceImpl {}
+
+#[async_trait]
+impl VersionService for VersionServiceImpl {
+    async fn validate(
+        &self,
+        _: Request<VersionRequest>,
+    ) -> Result<Response<VersionResponse>, Status> {
+        Ok(Response::new(VersionResponse {
+            version: VERSION.to_string(),
+        }))
+    }
+}
+
 #[derive(Debug)]
 struct Service {
     address: Ipv4Addr,
     port: u16,
-	last_ping_time: Instant
 }
 
 #[derive(Debug, Default)]
@@ -38,7 +58,6 @@ impl DiscoveryService for DiscoveryServiceImpl {
                 .parse()
                 .map_err(|_| Status::new(Code::InvalidArgument, "expected a valid ip address"))?,
             port: inner.port as u16,
-			last_ping_time: Instant::now()
         };
         // check if the service is already registered, and create it if not
         let kind = ServiceKind::from_i32(inner.kind).unwrap();
@@ -83,7 +102,7 @@ impl DiscoveryService for DiscoveryServiceImpl {
         &self,
         request: Request<HeartbeatPayload>,
     ) -> Result<Response<HeartbeatPayload>, Status> {
-		Ok(Response::new(request.into_inner()))
+        Ok(Response::new(request.into_inner()))
     }
 }
 
@@ -111,6 +130,7 @@ Authors: {}
     Server::builder()
         .trace_fn(|_| tracing::info_span!("service-discovery"))
         .add_service(DiscoveryServiceServer::new(service))
+        .add_service(VersionServiceServer::new(VersionServiceImpl {}))
         .serve(addr)
         .await?;
     Ok(())
