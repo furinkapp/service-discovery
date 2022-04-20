@@ -1,17 +1,20 @@
-use std::{collections::HashMap, error::Error, net::Ipv4Addr};
+use std::{collections::HashMap, error::Error, net::Ipv4Addr, time::Instant};
 
 use furink_proto::discovery::{
     discovery_service_server::{DiscoveryService, DiscoveryServiceServer},
     lookup_response::LookupPayload,
-    LookupRequest, LookupResponse, RegisterRequest, RegisterResponse, ServiceKind,
+    HeartbeatPayload, LookupRequest, LookupResponse, RegisterRequest, RegisterResponse,
+    ServiceKind,
 };
 use tokio::sync::RwLock;
 use tonic::{async_trait, transport::Server, Code, Request, Response, Status};
+use uuid::Uuid;
 
 #[derive(Debug)]
 struct Service {
     address: Ipv4Addr,
     port: u16,
+	last_ping_time: Instant
 }
 
 #[derive(Debug, Default)]
@@ -35,6 +38,7 @@ impl DiscoveryService for DiscoveryServiceImpl {
                 .parse()
                 .map_err(|_| Status::new(Code::InvalidArgument, "expected a valid ip address"))?,
             port: inner.port as u16,
+			last_ping_time: Instant::now()
         };
         // check if the service is already registered, and create it if not
         let kind = ServiceKind::from_i32(inner.kind).unwrap();
@@ -45,6 +49,7 @@ impl DiscoveryService for DiscoveryServiceImpl {
         }
         // return response
         Ok(Response::new(RegisterResponse {
+            id: Uuid::new_v4().to_string(),
             count: services.get(&kind).map(|v| v.len()).unwrap_or(0) as i64,
         }))
     }
@@ -72,6 +77,13 @@ impl DiscoveryService for DiscoveryServiceImpl {
                 })
                 .collect(),
         }))
+    }
+
+    async fn heartbeat(
+        &self,
+        request: Request<HeartbeatPayload>,
+    ) -> Result<Response<HeartbeatPayload>, Status> {
+		Ok(Response::new(request.into_inner()))
     }
 }
 

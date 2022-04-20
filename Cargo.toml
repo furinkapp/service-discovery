@@ -11,5 +11,6 @@ tokio = { version = "1", features = ["full"] }
 tonic = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3"
+uuid = { version = "0.8", features = ["v4"] }
 
 furink-proto = { git = "https://github.com/furinkapp/proto-rust.git" }
