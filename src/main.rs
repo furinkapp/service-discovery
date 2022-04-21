@@ -1,4 +1,4 @@
-use std::{collections::HashMap, error::Error, net::Ipv4Addr, time::Instant};
+use std::{collections::HashMap, env, error::Error, net::Ipv4Addr, time::Instant};
 
 use furink_proto::{
     discovery::{
@@ -31,10 +31,11 @@ impl VersionService for VersionServiceImpl {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Service {
     address: Ipv4Addr,
     port: u16,
+    last_heartbeat: Instant,
 }
 
 #[derive(Debug, Default)]
@@ -58,6 +59,7 @@ impl DiscoveryService for DiscoveryServiceImpl {
                 .parse()
                 .map_err(|_| Status::new(Code::InvalidArgument, "expected a valid ip address"))?,
             port: inner.port as u16,
+            last_heartbeat: Instant::now(),
         };
         // check if the service is already registered, and create it if not
         let kind = ServiceKind::from_i32(inner.kind).unwrap();
@@ -86,6 +88,25 @@ impl DiscoveryService for DiscoveryServiceImpl {
         }
         // unwrap services
         let services = services.get(&kind).unwrap();
+        // find services that have not had a heartbeat in the last 60 seconds
+        let invalid_services: Vec<&Service> = services
+            .iter()
+            .filter(|s| {
+                s.last_heartbeat.elapsed().as_secs()
+                    < env::var("HEARTBEAT_TIMEOUT")
+                        .expect("HEARTBEAT_TIMEOUT")
+                        .parse::<u64>()
+                        .unwrap()
+            })
+            .collect();
+        // remove invalid services
+        // this is done in a block to prevent locking the services map for too long
+        {
+            let mut services = self.services.write().await;
+            for (_, services) in services.iter_mut() {
+                services.retain(|s| !invalid_services.contains(&s));
+            }
+        }
         // return response
         Ok(Response::new(LookupResponse {
             services: services
@@ -108,6 +129,10 @@ impl DiscoveryService for DiscoveryServiceImpl {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+	// load dotenv when in development
+    if cfg!(debug_assertions) {
+        dotenv::dotenv().unwrap();
+    }
     // print splash
     println!(
         r#"
@@ -126,6 +151,7 @@ Authors: {}
     let addr = "[::1]:50051".parse().unwrap();
     let service = DiscoveryServiceImpl::default();
     tracing::info!(message = "Starting server...", %addr);
+
     // create server
     Server::builder()
         .trace_fn(|_| tracing::info_span!("service-discovery"))
